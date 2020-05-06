@@ -120,6 +120,46 @@ TVM_DLL Pass LiftAttrScope(std::string attr_key);
 TVM_DLL Pass LoopPartition(bool split_const_loop);
 
 /*!
+ * \brief Create relaxed copies of IfThenElse nodes and hoist them to outer loops
+ *
+ * When a loop is split, a boundary checking will be introduced in the inner-most
+ * loop. For example:
+ *
+ * ```
+ * for (i.outer = 0; i.outer < floor(n / 4); i.outer++) {
+ *   for (i.inner = 0; i.inner < 4; i.inner++) {
+ *     if (i.outer * 4 + i.inner < n) {
+ *       // body
+ *     }
+ *   }
+ * }
+ * ```
+ *
+ * When the boundary `n` is constant, `LoopPartition` will completely eliminate
+ * the `if`. But when `n` can only be determined in run time (e.g. sparse op),
+ * the `if` in the inner-most loop may lead to poor performance.
+ *
+ * `HoistRelaxedIf` transforms the code above to be like:
+ * for (i.outer = 0; i.outer < floor(n / 4); i.outer++) {
+ *   if (i.outer * 4 + 3 < n) {
+ *     for (i.inner = 0; i.inner < 4; i.inner++) {
+ *       // body
+ *     }
+ *   } else {
+ *     for (i.inner = 0; i.inner < 4; i.inner++) {
+ *       if (i.outer * 4 + i.inner < n) {
+ *         // body
+ *       }
+ *     }
+ *   }
+ * }
+ * ```
+ *
+ * \return The pass.
+ */
+TVM_DLL Pass HoistRelaxedIf();
+
+/*!
  * \brief Lower vectorization loops.
  *
  * \param enable_vectorize Whether vectorization is enabled.

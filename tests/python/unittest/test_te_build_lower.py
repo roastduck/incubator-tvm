@@ -48,7 +48,8 @@ def test_split_uneven_unique_likely():
     x, y = c.op.axis
     sch = te.create_schedule(c.op)
     xo, xi = sch[c].split(x, 5)
-    stmt = tvm.lower(sch, [a, b, c])["main"].body
+    # use simple_mode to skip branch optimization
+    stmt = tvm.lower(sch, [a, b, c], simple_mode=True)["main"].body
     assert isinstance(stmt.body.body.body, tvm.tir.stmt.IfThenElse)
 
 
