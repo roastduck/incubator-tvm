@@ -32,7 +32,6 @@ namespace tvm {
 namespace tir {
 
 /*
- * Base class of IfThenElseFinder and SyncChecker
  * Visit sub-expressions of a statement only, not to visit its
  * sub-statements
  */
@@ -94,65 +93,12 @@ class SubExprVisitor : public ExprVisitor {
   RetType ret_;
 };
 
-typedef Map<Var, ObjectRef> VarSet;  // Actually a set. The value is not used.
-
 /*
- * Check if there are any Load or Store node of shared memory.
- * If so, we should skip transforming the statment to avoid
- * thread synchronizing issues
+ * Mutate sub-expressions of a statement only, not to mutate its
+ * sub-statements
  */
-class SyncChecker : public SubExprVisitor<bool> {
+class SubExprMutator : public ExprMutator {
  public:
-  explicit SyncChecker(const VarSet& shared_vars)
-      : SubExprVisitor(false), shared_vars_(shared_vars) {}
-
-  template <class Node>
-  bool Check(const Node* op) {
-    return SubExprVisitor::Check(op);
-  }
-
-  bool Check(const StoreNode* op) {
-    if (shared_vars_.count(op->buffer_var)) {
-      return true;
-    }
-    return SubExprVisitor::Check(op);
-  }
-
- protected:
-  void VisitExpr_(const LoadNode* op) override {
-    if (shared_vars_.count(op->buffer_var)) {
-      ret_ = true;
-    }
-    SubExprVisitor::VisitExpr_(op);
-  }
-
- private:
-  const VarSet& shared_vars_;
-};
-
-/*
- * Find the condition of the out-most if_then_else intrinsic and
- * count the total number of if_then_else intrinsics
- */
-class IfThenElseFinder : public SubExprVisitor<std::pair<PrimExpr, int>> {
- public:
-  IfThenElseFinder() : SubExprVisitor(std::pair<PrimExpr, int>(PrimExpr{}, 0)) {}
-
- protected:
-  void VisitExpr_(const CallNode* op) override {
-    if (op->is_intrinsic(tir::intrinsic::tvm_if_then_else)) {
-      if (!ret_.first.defined()) ret_.first = op->args[0];  // condition
-      ret_.second++;                                        // cnt
-    }
-    SubExprVisitor::VisitExpr_(op);
-  }
-};
-
-// Remove the out-most IfThenElse intrinsic and leave one branch
-class IfThenElseOutMostRemover : public ExprMutator {
- public:
-  explicit IfThenElseOutMostRemover(bool branch_to_keep) : branch_to_keep_(branch_to_keep) {}
-
   Stmt Mutate(const IfThenElseNode* op) {
     auto condition = operator()(std::move(op->condition));
     return IfThenElseNode::make(condition, op->then_case, op->else_case);
@@ -203,6 +149,75 @@ class IfThenElseOutMostRemover : public ExprMutator {
     auto value = operator()(std::move(op->value));
     return EvaluateNode::make(value);
   }
+};
+
+typedef Map<Var, ObjectRef> VarSet;  // Actually a set. The value is not used.
+
+/*
+ * Check if there are any Load or Store node of shared memory.
+ * If so, we should skip transforming the statment to avoid
+ * thread synchronizing issues
+ */
+class SyncChecker : public StmtExprVisitor {
+ public:
+  explicit SyncChecker(const VarSet& shared_vars) : shared_vars_(shared_vars) {}
+
+  template <class Node>
+  bool Check(const Node* op) {
+    VisitStmt_(op);
+    return ret_;
+  }
+
+ protected:
+  // template overload to receive call from Check
+  template <class Node>
+  void VisitStmt_(const Node* op) {
+    StmtExprVisitor::VisitStmt_(op);
+  }
+
+  void VisitStmt_(const StoreNode* op) override {
+    if (shared_vars_.count(op->buffer_var)) {
+      ret_ = true;
+      return;
+    }
+    StmtExprVisitor::VisitStmt_(op);
+  }
+
+  void VisitExpr_(const LoadNode* op) override {
+    if (shared_vars_.count(op->buffer_var)) {
+      ret_ = true;
+      return;
+    }
+    StmtExprVisitor::VisitExpr_(op);
+  }
+
+ private:
+  const VarSet& shared_vars_;
+  bool ret_ = false;
+};
+
+/*
+ * Find the condition of the out-most if_then_else intrinsic and
+ * count the total number of if_then_else intrinsics
+ */
+class IfThenElseFinder : public SubExprVisitor<std::pair<PrimExpr, int>> {
+ public:
+  IfThenElseFinder() : SubExprVisitor(std::pair<PrimExpr, int>(PrimExpr{}, 0)) {}
+
+ protected:
+  void VisitExpr_(const CallNode* op) override {
+    if (op->is_intrinsic(tir::intrinsic::tvm_if_then_else)) {
+      if (!ret_.first.defined()) ret_.first = op->args[0];  // condition
+      ret_.second++;                                        // cnt
+    }
+    SubExprVisitor::VisitExpr_(op);
+  }
+};
+
+// Remove the out-most IfThenElse intrinsic and leave one branch
+class IfThenElseOutMostRemover : public SubExprMutator {
+ public:
+  explicit IfThenElseOutMostRemover(bool branch_to_keep) : branch_to_keep_(branch_to_keep) {}
 
  protected:
   PrimExpr VisitExpr_(const CallNode* op) override {
