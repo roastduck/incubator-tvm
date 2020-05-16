@@ -789,6 +789,19 @@ def _mx_l2_normalize(inputs, attrs):
     return _op.nn.l2_normalize(inputs[0], **new_attrs)
 
 
+def _mx_softsign(inputs, attrs):
+    return inputs[0] / (_expr.const(1.0) + _op.abs(inputs[0]))
+
+
+def _mx_hard_sigmoid(inputs, attrs):
+    x = (_expr.const(0.2) * inputs[0]) + _expr.const(0.5)
+    return _op.clip(x, a_min=0.0, a_max=1.0)
+
+
+def _mx_reciprocal(inputs, attrs):
+    return _expr.const(1.0) /inputs[0]
+
+
 def _mx_shape_array(inputs, attrs):
     assert len(inputs) == 1
     if attrs.get_int("lhs_begin", None) is not None:
@@ -1712,45 +1725,90 @@ def _qnn_fully_connected(inputs, attrs, subgraphs, params):
                 res = _op.nn.relu(res)
             return res
 
+
+def _mx_broadcast_to(inputs, attrs):
+    data = inputs[0]
+    tgt_shape = attrs.get_int_tuple("shape", [])
+
+    return _op.broadcast_to(data, tgt_shape)
+
+
+def _mx_logical_not(inputs, input_types):
+    data = inputs[0]
+    dtype = _infer_type(data).checked_type.dtype
+    data = _op.cast(data, "bool") if dtype != "bool" else data
+
+    return _op.cast(_op.logical_not(data), dtype)
+
+
+def _mx_broadcast_logical(logical_op):
+    def impl(inputs, input_types):
+        lhs_type = _infer_type(inputs[0]).checked_type.dtype
+        rhs_type = _infer_type(inputs[1]).checked_type.dtype
+        lhs = _op.cast(inputs[0], "bool") if lhs_type != "bool" else inputs[0]
+        rhs = _op.cast(inputs[1], "bool") if rhs_type != "bool" else inputs[1]
+
+        return _op.cast(logical_op(lhs, rhs), lhs_type)
+    return impl
+
+
 # Note: due to attribute conversion constraint
 # ops in the identity set must be attribute free
 _identity_list = [
+    "abs",
     "log",
     "exp",
     "erf",
     "sqrt",
     "floor",
     "ceil",
+    "round",
+    "sign",
     "sigmoid",
-    "tanh",
     "negative",
     "reshape_like",
     "zeros_like",
     "ones_like",
     "where",
     "gather_nd",
-    "tan",
     "cos",
-    "sin"
+    "cosh",
+    "sin",
+    "sinh",
+    "tan",
+    "tanh",
 ]
 
 _convert_map = {
     "_copy"                  : _rename(_op.copy),
     "relu"                   : _rename(_op.nn.relu),
     "broadcast_add"          : _rename(_op.add),
+    "broadcast_plus"         : _rename(_op.add),
     "broadcast_sub"          : _rename(_op.subtract),
+    "broadcast_minus"        : _rename(_op.subtract),
     "broadcast_mul"          : _rename(_op.multiply),
     "broadcast_div"          : _rename(_op.divide),
     "broadcast_mod"          : _rename(_op.mod),
     "broadcast_maximum"      : _rename(_op.maximum),
     "broadcast_minimum"      : _rename(_op.minimum),
+    "broadcast_power"        : _rename(_op.power),
+    "arccos"                 : _rename(_op.acos),
+    "arcsin"                 : _rename(_op.asin),
     "arctan"                 : _rename(_op.atan),
+    "arccosh"                : _rename(_op.acosh),
+    "arcsinh"                : _rename(_op.asinh),
+    "arctanh"                : _rename(_op.atanh),
     "broadcast_equal"        : _mx_compare(_op.equal, _rename),
     "broadcast_not_equal"    : _mx_compare(_op.not_equal, _rename),
     "broadcast_greater"      : _mx_compare(_op.greater, _rename),
     "broadcast_greater_equal": _mx_compare(_op.greater_equal, _rename),
     "broadcast_lesser"       : _mx_compare(_op.less, _rename),
     "broadcast_lesser_equal" : _mx_compare(_op.less_equal, _rename),
+    "broadcast_logical_or"   : _mx_broadcast_logical(_op.logical_or),
+    "broadcast_logical_and"  : _mx_broadcast_logical(_op.logical_and),
+    "broadcast_logical_xor"  : _mx_broadcast_logical(_op.logical_xor),
+    "broadcast_to"           : _mx_broadcast_to,
+    "logical_not"            : _mx_logical_not,
     "_equal"                 : _mx_compare(_op.equal, _rename),
     "_not_equal"             : _mx_compare(_op.not_equal, _rename),
     "_greater"               : _mx_compare(_op.greater, _rename),
@@ -1814,6 +1872,9 @@ _convert_map = {
     "softmax"       : _softmax_op(_op.nn.softmax),
     "log_softmax"   : _softmax_op(_op.nn.log_softmax),
     "Softmax"       : _softmax_op(_op.nn.softmax),
+    "softsign"      : _mx_softsign,
+    "hard_sigmoid"  : _mx_hard_sigmoid,
+    "reciprocal"    : _mx_reciprocal,
     # per op specialization
     "Reshape"       : _reshape,
     "reshape"       : _reshape,
@@ -1860,6 +1921,7 @@ _convert_map = {
     "reverse"       : _mx_reverse,
     "squeeze"       : _mx_squeeze,
     "broadcast_axis": _mx_broadcast_axis,
+    "broadcast_axes": _mx_broadcast_axis,
     "BlockGrad"     : _mx_BlockGrad,
     "shape_array"   : _mx_shape_array,
     "Embedding"     : _mx_embedding,
@@ -1897,7 +1959,6 @@ _convert_map = {
     # List of missing operators that are present in NNVMv1
     # TODO(tvm-tvm): support all operators.
     #
-    # "broadcast_to",
     # "contrib_fifo_buffer": _mx_contrib_fifo_buffer,
     "ring_buffer": _mx_contrib_fifo_buffer,
     # Qnn ops
