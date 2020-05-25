@@ -178,6 +178,69 @@ class IfThenElseOutMostRemover : public ExprMutator {
   bool found_ = false;
 };
 
+// Rename all the Var defined in the else case, to meet the SSA requirement
+class Renamer : public StmtExprMutator {
+ public:
+  explicit Renamer(const std::string &suffix)
+    : suffix_(suffix) {}
+
+  Stmt Rename(Stmt stmt) {
+    stmt = operator()(std::move(stmt));
+    return Substitute(std::move(stmt), var_map_);
+  }
+
+ protected:
+  Stmt VisitStmt_(const ForNode *op) override {
+    auto ret = StmtExprMutator::VisitStmt_(op);
+    op = ret.as<ForNode>();
+    Var new_var(op->loop_var->name_hint + suffix_);
+    var_map_.Set(op->loop_var, new_var);
+    return ForNode::make(new_var, op->min, op->extent, op->for_type,
+        op->device_api, op->body);
+  }
+
+  Stmt VisitStmt_(const AllocateNode *op) override {
+    auto ret = StmtExprMutator::VisitStmt_(op);
+    op = ret.as<AllocateNode>();
+    Var new_var(op->buffer_var->name_hint + suffix_);
+    var_map_.Set(op->buffer_var, new_var);
+    return AllocateNode::make(new_var, op->dtype, op->extents,
+        op->condition, op->body);
+  }
+
+  Stmt VisitStmt_(const AttrStmtNode *op) override {
+    auto ret = StmtExprMutator::VisitStmt_(op);
+    op = ret.as<AttrStmtNode>();
+    if (op->node->IsInstance<VarNode>()) {
+      auto var = Downcast<Var>(op->node);
+      if (var_map_.count(var)) {
+        return AttrStmtNode::make(var_map_.at(var), op->attr_key, op->value, op->body);
+      }
+    }
+    return ret;
+  }
+
+  Stmt VisitStmt_(const LetStmtNode *op) override {
+    auto ret = StmtExprMutator::VisitStmt_(op);
+    op = ret.as<LetStmtNode>();
+    Var new_var(op->var->name_hint + suffix_);
+    var_map_.Set(op->var, new_var);
+    return LetStmtNode::make(new_var, op->value, op->body);
+  }
+
+  PrimExpr VisitExpr_(const LetNode *op) override {
+    auto ret = StmtExprMutator::VisitExpr_(op);
+    op = ret.as<LetNode>();
+    Var new_var(op->var->name_hint + suffix_);
+    var_map_.Set(op->var, new_var);
+    return LetNode::make(new_var, op->value, op->body);
+  }
+
+ private:
+  const std::string &suffix_;  // name suffix
+  Map<Var, PrimExpr> var_map_;  // old var -> new var
+};
+
 /*
  * Replace if_then_else intrinsics to be If statements
  *
@@ -237,8 +300,8 @@ class IfThenElseReplacer : public StmtMutator {
       IfThenElseOutMostRemover keep_false(false);
       auto true_branch = keep_true.Mutate(CopyOnWrite(op).get());
       auto false_branch = keep_false.Mutate(CopyOnWrite(op).get());
-      Stmt ret = IfThenElseNode::make(condition,
-          Downcast<Stmt>(true_branch), Downcast<Stmt>(false_branch));
+      false_branch = Renamer(".else").Rename(false_branch);
+      Stmt ret = IfThenElseNode::make(condition, true_branch, false_branch);
       return VisitStmt_(ret.as<IfThenElseNode>());
       // Note that we transform one if_then_else at a time, so we are using
       // pre-order recursion

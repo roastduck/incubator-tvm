@@ -27,12 +27,12 @@ def test_if_then_else_intrin_to_stmt():
     dtype = A.dtype
     s = te.create_schedule(A.op)
     mod = tvm.lower(s, [A], name="f")
-    assert(type(mod["f"].body.body.body) is tvm.tir.stmt.IfThenElse)
-    assert(type(mod["f"].body.body.body.then_case) is tvm.tir.stmt.IfThenElse)
-    assert(type(mod["f"].body.body.body.else_case) is tvm.tir.stmt.IfThenElse)
-    assert("5" in str(mod["f"].body.body.body.condition))
-    assert("3" in str(mod["f"].body.body.body.then_case.condition))
-    assert("8" in str(mod["f"].body.body.body.else_case.condition))
+    assert type(mod["f"].body.body.body) is tvm.tir.stmt.IfThenElse
+    assert type(mod["f"].body.body.body.then_case) is tvm.tir.stmt.IfThenElse
+    assert type(mod["f"].body.body.body.else_case) is tvm.tir.stmt.IfThenElse
+    assert "5" in str(mod["f"].body.body.body.condition)
+    assert "3" in str(mod["f"].body.body.body.then_case.condition)
+    assert "8" in str(mod["f"].body.body.body.else_case.condition)
 
     ctx = tvm.cpu(0)
     mod = tvm.build(mod, [A], target="llvm")
@@ -44,5 +44,22 @@ def test_if_then_else_intrin_to_stmt():
     mod(A_nd)
     tvm.testing.assert_allclose(A_nd.asnumpy(), A_np)
 
+def test_if_then_else_in_for_extent():
+    ib = tvm.tir.ir_builder.create()
+    A = ib.pointer("float32", name="A")
+    C = ib.pointer("float32", name="C")
+    n = te.size_var("n")
+    with ib.for_range(0, tvm.te.if_then_else(n > 10, 10, n), name="i") as i:
+        A[i] = C[i]
+
+    body = ib.get()
+    mod = tvm.IRModule.from_expr(
+        tvm.tir.PrimFunc([A, C, n], body))
+    body = tvm.tir.transform.IfThenElseIntrinToStmt(4)(mod)["main"].body
+    assert isinstance(body, tvm.tir.IfThenElse)
+    assert isinstance(body.then_case, tvm.tir.For)
+    assert isinstance(body.else_case, tvm.tir.For)
+
 if __name__ == "__main__":
     test_if_then_else_intrin_to_stmt()
+    test_if_then_else_in_for_extent()

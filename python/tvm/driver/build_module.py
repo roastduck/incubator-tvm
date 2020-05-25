@@ -170,13 +170,12 @@ def lower(sch,
         tvm.tir.transform.InjectPrefetch(),
         tvm.tir.transform.StorageFlatten(64, cfg.instrument_bound_checkers),
         tvm.tir.transform.NarrowDataType(32),
+        tvm.tir.transform.IfThenElseIntrinToStmt(4),
         tvm.tir.transform.Simplify(),
     ]
     pass_list += lower_phase1
 
     # Phase 2
-    pass_list += [tvm.tir.transform.IfThenElseIntrinToStmt(4)]
-
     if not simple_mode:
         pass_list += [(tvm.tir.transform.LoopPartition(cfg.partition_const_loop))]
 
