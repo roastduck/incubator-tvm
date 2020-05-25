@@ -509,8 +509,8 @@ bool ReshapeRel(const Array<Type>& types, int num_inputs, const Attrs& attrs,
   if (param->newshape) {
     auto temp = param->newshape.value();
     if (param->reverse) {
-      data_shape.assign(data->shape.rbegin(), data->shape.rend());
-      newshape.assign(temp.rbegin(), temp.rend());
+      data_shape.Assign(data->shape.rbegin(), data->shape.rend());
+      newshape.Assign(temp.rbegin(), temp.rend());
     } else {
       data_shape = data->shape;
       newshape = temp;
@@ -882,7 +882,7 @@ Array<te::Tensor> TakeCompute(const Attrs& attrs, const Array<te::Tensor>& input
   }
 }
 
-Expr MakeTake(Expr data, Expr indices, Integer axis, std::string mode) {
+Expr MakeTake(Expr data, Expr indices, Integer axis, String mode) {
   auto attrs = make_object<TakeAttrs>();
   attrs->axis = std::move(axis);
   attrs->mode = std::move(mode);
@@ -1938,7 +1938,7 @@ bool SplitRel(const Array<Type>& types, int num_inputs, const Attrs& attrs,
     }
     reporter->Assign(types[1], TupleType(Array<Type>(fields)));
   } else {
-    auto indices = param->indices_or_sections.as<ArrayNode>()->data;
+    auto indices = Downcast<Array<ObjectRef>>(param->indices_or_sections);
     auto begin = IndexExpr(tir::make_zero(DataType::Int(32)));
     std::vector<Type> fields;
     for (unsigned int i = 0; i < indices.size(); ++i) {
@@ -2166,7 +2166,7 @@ bool LayoutTransformRel(const Array<Type>& types, int num_inputs, const Attrs& a
   return true;
 }
 
-Expr MakeLayoutTransform(Expr data, std::string src_layout, std::string dst_layout) {
+Expr MakeLayoutTransform(Expr data, String src_layout, String dst_layout) {
   auto attrs = make_object<LayoutTransformAttrs>();
   attrs->src_layout = std::move(src_layout);
   attrs->dst_layout = std::move(dst_layout);
@@ -2248,6 +2248,9 @@ bool GatherNDRel(const Array<Type>& types, int num_inputs, const Attrs& attrs,
   Array<IndexExpr> oshape;
   for (size_t i = 1; i < kdim + 1; ++i) oshape.push_back(indices->shape[i]);
   for (size_t i = mdim->value; i < ndim; ++i) oshape.push_back(data->shape[i]);
+  if (oshape.size() == 0) {
+    oshape.push_back(tir::make_const(DataType::Int(32), 1));
+  }
   reporter->Assign(types[2], TensorType(oshape, data->dtype));
   return true;
 }
