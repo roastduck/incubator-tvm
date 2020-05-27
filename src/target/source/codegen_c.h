@@ -239,6 +239,9 @@ class CodeGenC : public ExprFunctor<void(const PrimExpr&, std::ostream&)>,
   /*! \brief Check if buf_var is volatile or not. */
   bool IsVolatile(const VarNode* buf_var) const { return volatile_buf_.count(buf_var) != 0; }
 
+  /*! \brief Try to optimize a sequence of `if` statments with `switch` */
+  bool OptimizeWithSwitch(const SeqStmtNode* op);
+
   /*! \brief restrict keyword */
   std::string restrict_keyword_{""};
   /*! \brief the storage scope of allocation */

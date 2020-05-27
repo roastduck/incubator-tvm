@@ -22,6 +22,9 @@
  */
 #include "codegen_c.h"
 
+#include <tvm/arith/analyzer.h>
+
+#include <map>
 #include <cctype>
 #include <iomanip>
 
@@ -895,6 +898,9 @@ void CodeGenC::VisitStmt_(const IfThenElseNode* op) {
 }
 
 void CodeGenC::VisitStmt_(const SeqStmtNode* op) {
+  if (OptimizeWithSwitch(op)) {
+    return;
+  }
   for (Stmt stmt : op->seq) {
     PrintStmt(stmt);
   }
@@ -946,6 +952,94 @@ void CodeGenC::PrintVecElemLoadExpr(DataType t, int i, const std::string& value,
     os << "))";
   }
   return;
+}
+
+static PrimExpr toIntGE0(const PrimExpr& expr) {
+  PrimExpr ret;
+  if (auto op = expr.as<GENode>()) {
+    ret = op->a - op->b;
+  } else if (auto op = expr.as<LENode>()) {
+    ret = op->b - op->a;
+  } else if (auto op = expr.as<GTNode>()) {
+    ret = op->a - op->b - 1;
+  } else if (auto op = expr.as<LTNode>()) {
+    ret = op->b - op->a - 1;
+  } else {
+    return PrimExpr{};
+  }
+  if (ret.dtype().is_int()) {
+    return ret;
+  } else {
+    return PrimExpr{};
+  }
+}
+
+bool CodeGenC::OptimizeWithSwitch(const SeqStmtNode* op) {
+  if (op->seq.empty()) {
+    return false;
+  }
+  for (const auto& stmt : op->seq) {
+    if (!stmt->IsInstance<IfThenElseNode>()) {
+      return false;
+    }
+  }
+
+  arith::Analyzer analyzer;
+  PrimExpr first_cond;
+  std::map<int64_t, Stmt> branches;  // ordered map
+  for (size_t i = 0, n = op->seq.size(); i < n; i++) {
+    auto if_node = op->seq[i].as<IfThenElseNode>();
+    if (if_node->else_case.defined()) {
+      return false;
+    }
+    auto cond = toIntGE0(if_node->condition);
+    if (!cond.defined()) {
+      return false;
+    }
+    if (i == 0) {
+      first_cond = analyzer.Simplify(cond);
+    }
+    const int64_t *c = as_const_int(analyzer.Simplify(cond - first_cond));
+    if (c == nullptr) {
+      return false;
+    }
+    branches[*c] = if_node->then_case;
+  }
+
+  if (branches.rbegin()->first - branches.begin()->first + 1 != (int64_t)branches.size()) {
+    return false;
+  }
+
+  PrintIndent();
+  stream << "switch (" << PrintExpr(first_cond) << ") {\n";
+  auto switch_scope = BeginScope();
+  PrintIndent();
+  stream << "default:\n";
+  auto case_scope = BeginScope();
+  PrintIndent();
+  stream << "if (" << PrintExpr(first_cond) << " < " << -branches.rbegin()->first << ") {\n";
+  PrintIndent();
+  stream << "  break;\n";
+  PrintIndent();
+  stream << "}\n";
+  PrintIndent();
+  stream << "// fall through\n";
+  EndScope(case_scope);
+  for (const auto& branch : branches) {
+    int64_t cond_int = branch.first;
+    const Stmt& body = branch.second;
+    PrintIndent();
+    stream << "case " << -cond_int << ":\n";
+    auto case_scope = BeginScope();
+    PrintStmt(body);
+    PrintIndent();
+    stream << "// fall through\n";
+    EndScope(case_scope);
+  }
+  EndScope(switch_scope);
+  PrintIndent();
+  stream << "}\n";
+  return true;
 }
 
 }  // namespace codegen
