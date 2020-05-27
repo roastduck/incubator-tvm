@@ -148,6 +148,16 @@ def LoopPartition():
     """
     return _ffi_api.LoopPartition()
 
+def HoistRelaxedIf():
+    """Create relaxed copies of IfThenElse nodes and hoist them to outer loops
+
+    Returns
+    -------
+    fpass : tvm.transform.Pass
+        The result pass
+    """
+    return _ffi_api.HoistRelaxedIf()
+
 
 def VectorizeLoop(enable_vectorize=True):
     """Lower vectorization loops.
